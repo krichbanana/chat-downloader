@@ -1,6 +1,6 @@
 {
     "default": {
-        "template": "{time_text|timestamp}{author.badges}{money.text}{author.display_name|author.name}{message}",
+        "template": "{time_text|timestamp}{author.badges}{money.text}{author.display_name|author.name}{message|primary_text}",
         "keys": {
             "time_text": "{} | ",
             "timestamp": {
@@ -9,10 +9,12 @@
             },
             "author.badges": {
                 "template": "({}) ",
+                "item_template": "{title}",
                 "separator": ", "
             },
             "money.text": "*{}* ",
-            "message": ": {}"
+            "message": ": {}",
+            "primary_text": " {}"
         }
     },
     "24_hour": {
@@ -49,10 +51,31 @@
                 "deleted_message",
                 "ban_user"
             ],
-            "template":"{time_text|timestamp}{message}",
+            "template": "{time_text|timestamp}{message}",
             "inherit": "default",
             "keys": {
                 "message": "{}"
+            }
+        },
+        {
+            "matching":[
+                "poll",
+                "poll_update"
+            ],
+            "template": "{time_text|timestamp}{metadata_text.message}{poll_question.message}{choices}",
+            "inherit": "default",
+            "keys": {
+                "metadata_text.message": "{}",
+                "poll_question.message": ": {}",
+                "choices": {
+                    "template": ":{}",
+                    "item_template": "{message}{vote_percentage}",
+                    "separator": "",
+                    "keys": {
+                        "message": "\n{}",
+                        "vote_percentage": ": {}"
+                    }
+                }
             }
         }
     ],

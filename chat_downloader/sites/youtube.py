@@ -439,6 +439,9 @@ class YouTubeChatDownloader(BaseChatDownloader):
             'membership_item',
             'paid_message',
             'paid_sticker',
+            # gift memberships
+            'sponsorships_gift_purchase_announcement',
+            'sponsorships_gift_redemption_announcement',
         ],
         'tickers': [
             # superchat messages which appear ticker (at the top)
@@ -448,11 +451,16 @@ class YouTubeChatDownloader(BaseChatDownloader):
         ],
         'banners': [
             'banner',
-            'banner_header'
+            'banner_header',
+            'banner_redirect',
+        ],
+        'polls': [
+            'poll',
+            'action_panel',
         ],
 
         'donations': [
-            'donation_announcement'
+            'donation_announcement',
         ],
         'engagement': [
             # message saying live chat replay is on
@@ -625,7 +633,29 @@ class YouTubeChatDownloader(BaseChatDownloader):
         return message_info
 
     @ staticmethod
+    def _parse_choices(item_info):
+        """ Reads and parses YouTube poll choices """
+        choices = []
+
+        for choice_info in item_info or []:
+            choice_data = {}
+            for key in choice_info or []:
+                if key == 'text':
+                    choice_data.update(YouTubeChatDownloader._parse_runs(choice_info['text']))
+                else:
+                    r.remap(choice_data, YouTubeChatDownloader._REMAPPING,
+                            key, choice_info[key])
+
+            if choice_data:
+                choices.append(choice_data)
+
+        return choices
+
+    @ staticmethod
     def _parse_item(item, info=None, offset=0):
+        if not isinstance(item, dict):
+            return {}
+
         if info is None:
             info = {}
         # info is starting point
@@ -656,6 +686,21 @@ class YouTubeChatDownloader(BaseChatDownloader):
             if renderer:
                 info.update(YouTubeChatDownloader._parse_item(
                     renderer, offset=offset))
+
+        header = item_info.get('header')
+        if header:
+            debug_log('got nested header')
+            info.update(YouTubeChatDownloader._parse_item(
+                header, offset=offset))
+
+        contents = item_info.get('contents')
+        if contents:
+            debug_log('got nested contents')
+            info.update(YouTubeChatDownloader._parse_item(
+                contents, offset=offset))
+            if contents.get('liveChatBannerRedirectRenderer'):
+                debug_log('overriding message type')
+                info['message_type'] = 'banner_redirect'  # FIXME don't do this directly, and not here
 
         BaseChatDownloader._move_to_dict(info, 'author')
 
@@ -755,11 +800,14 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
     @ staticmethod
     def _parse_action_button(item):
-        endpoint = multi_get(item, 'buttonRenderer', 'navigationEndpoint')
+        endpoint = multi_get(item, 'buttonRenderer', 'navigationEndpoint') or multi_get(item, 'buttonRenderer', 'command')
+        text = multi_get(item, 'buttonRenderer', 'text', 'simpleText') or multi_get(item, 'buttonRenderer', 'text')
+        if isinstance(text, dict) and text.get('runs'):
+            text = YouTubeChatDownloader._parse_runs(text)
 
         return {
             'url': YouTubeChatDownloader._parse_navigation_endpoint(endpoint) if endpoint else '',
-            'text': multi_get(item, 'buttonRenderer', 'text', 'simpleText') or ''
+            'text': text or ''
         }
 
     @ staticmethod
@@ -841,10 +889,12 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         # ticker_sponsor_item
         'detailText': r(None, _parse_runs, True),
+        'detailIcon': r('detail_icon', lambda x: x.get('iconType')),
         'customThumbnail': r('badge_icons', _parse_thumbnails),
 
         # membership_item
         'headerPrimaryText': r('header_primary_text', _parse_text),
+        'primaryText': r('primary_text', _parse_text),
         'headerSubtext': r('header_secondary_text', _parse_text),
         'sponsorPhoto': r('sponsor_icons', _parse_thumbnails),
 
@@ -859,9 +909,11 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         # action buttons
         'actionButton': r('action', _parse_action_button),
+        'inlineActionButton': r('inline_action', _parse_action_button),
 
         # addBannerToLiveChatCommand
         'text': r(None, _parse_runs, True),
+        'bannerMessage': r(None, _parse_runs, True),
         'viewerIsCreator': 'viewer_is_creator',
         'targetId': 'target_message_id',
         'isStackable': 'is_stackable',
@@ -876,6 +928,17 @@ class YouTubeChatDownloader(BaseChatDownloader):
         # tooltip
         'detailsText': r(None, _parse_runs, True),
 
+        # poll (action_panel)
+        'pollQuestion': r('poll_question', _parse_runs),
+        'choices': r('choices', _parse_choices),
+        'liveChatPollId': 'poll_id',
+        'liveChatPollType': 'poll_type',
+        'metadataText': r('metadata_text', _parse_runs),
+        'thumbnail': r('thumbnail', _parse_thumbnails),
+        # poll
+        'selected': 'selected',
+        'voteRatio': 'vote_ratio',
+        'votePercentage': r('vote_percentage', _get_simple_text),
     }
 
     _COLOUR_KEYS = [
@@ -941,6 +1004,8 @@ class YouTubeChatDownloader(BaseChatDownloader):
             'liveChatPaidMessageRenderer',
             'liveChatPlaceholderItemRenderer',  # placeholder
             'liveChatDonationAnnouncementRenderer',
+            'liveChatSponsorshipsGiftPurchaseAnnouncementRenderer',
+            'liveChatSponsorshipsGiftRedemptionAnnouncementRenderer',
 
             'liveChatPaidStickerRenderer',
             'liveChatModeChangeMessageRenderer',  # e.g. slow mode enabled
@@ -978,6 +1043,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
     _KNOWN_ADD_BANNER_TYPES = {
         'addBannerToLiveChatCommand': [
             'liveChatBannerRenderer',
+            'liveChatBannerRedirectRenderer',
             'liveChatBannerHeaderRenderer',
             'liveChatTextMessageRenderer',
         ]
@@ -1021,15 +1087,24 @@ class YouTubeChatDownloader(BaseChatDownloader):
     # }
 
     _KNOWN_POLL_ACTION_TYPES = {
+        'showLiveChatActionPanelAction': [
+            'liveChatActionPanelRenderer',
+            'pollRenderer',
+            'pollHeaderRenderer',
+            'poll',  # new poll
+        ],
+        'updateLiveChatPollAction': [
+            'pollRenderer',
+            'pollHeaderRenderer',
+            'pollUpdate',  # updated poll results, pollToUpdate
+        ],
+        'closeLiveChatActionPanelAction': [
+            'closePanel',  # fake name
+            'targetPanelId',
+        ],
     }
 
     _KNOWN_IGNORE_ACTION_TYPES = {
-
-        # TODO add support for poll actions
-        'showLiveChatActionPanelAction': [],
-        'updateLiveChatPollAction': [],
-        'closeLiveChatActionPanelAction': []
-
     }
 
     _KNOWN_ACTION_TYPES = {
@@ -1757,19 +1832,43 @@ class YouTubeChatDownloader(BaseChatDownloader):
                                 original_item)
 
                             header = original_item[original_message_type].get(
-                                'header')
-                            parsed_header = self._parse_item(
-                                header, offset=offset)
-                            header_message = parsed_header.get('message')
+                                'header') or None
+                            parsed_header = None
+                            if not header:
+                                log('warning', f'Could not extract header from banner (handled?): {original_item}')
+                            else:
+                                parsed_header = self._parse_item(
+                                    header, offset=offset)
+                            if parsed_header:
+                                header_message = parsed_header.get('message')
+                            else:
+                                header_message = None
 
                             contents = original_item[original_message_type].get(
-                                'contents')
-                            parsed_contents = self._parse_item(
-                                contents, offset=offset)
+                                'contents') or original_item
+                            parsed_contents = None
+                            if original_item is contents:
+                                log('warning', f'Could not extract contents from banner: {original_item}')
+                                parsed_contents = self._parse_item(
+                                    contents, offset=offset)
+                            if parsed_contents:
+                                banner_message = parsed_contents.get('bannerMessage')
+                            else:
+                                banner_message = None
 
-                            data.update(parsed_header)
-                            data.update(parsed_contents)
-                            data['header_message'] = header_message
+                            data.update(parsed_header or {})
+                            data.update(parsed_contents or {})
+                            if header_message:
+                                data['header_message'] = header_message
+                            if banner_message:
+                                data['message'] = banner_message
+                            else:
+                                debug_log('no message, trying higher up', data)
+                                parsed_contents = self._parse_item(
+                                    original_item, data, offset)
+                                # FIXME: this still feels very yucky.
+                                if parsed_contents.get('message_type') == 'banner_redirect':
+                                    original_message_type = 'liveChatBannerRedirectRenderer'
                         else:
                             debug_log(
                                 'No bannerRenderer item',
@@ -1782,6 +1881,25 @@ class YouTubeChatDownloader(BaseChatDownloader):
                         original_item = action
                         original_message_type = 'removeBanner'
                         data = self._parse_item(original_item, data, offset)
+
+                    elif original_action_type in self._KNOWN_POLL_ACTION_TYPES:
+                        original_item = multi_get(
+                            action, original_action_type, 'panelToShow') or {}
+                        original_message_type = 'poll'  # fake name
+                        if not original_item:
+                            original_item = multi_get(
+                                action, original_action_type, 'pollToUpdate') or {}
+                            original_message_type = 'pollUpdate'  # fake name
+                        data = self._parse_item(original_item or action, data, offset)
+                        if not original_item:
+                            panel_id = multi_get(
+                                action, original_action_type, 'targetPanelId') or {}
+                            if panel_id:
+                                original_message_type = 'closePanel'  # fake name
+                                data.update({'target_panel_id': panel_id})
+                            else:
+                                original_message_type = try_get_first_key(
+                                    original_item) or ''
 
                     elif original_action_type in self._KNOWN_IGNORE_ACTION_TYPES:
                         continue  # ignore these
