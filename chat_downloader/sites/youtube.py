@@ -456,6 +456,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
             'banner',
             'banner_header',
             'banner_redirect',
+            # 'sponsorships_gift_redemption_banner', => maps to 'banner' for now
         ],
         'polls': [
             'poll',
@@ -921,6 +922,15 @@ class YouTubeChatDownloader(BaseChatDownloader):
         'targetId': 'target_message_id',
         'isStackable': 'is_stackable',
         'backgroundType': 'background_type',
+        # gift redemption banner
+        'gifterPhoto': r('gifter_photo', _parse_thumbnails),
+        'channelAvatar': r('channel_avatar', _parse_item),
+        'channelImage': r('channel_image', _parse_thumbnails),
+        'imageOverlay': r('image_overlay', _parse_thumbnails),
+        'imageOverlayDarkMode': r('image_overlay_dark_mode', _parse_thumbnails),
+        'badgeIcon': r('badge_icon', lambda x: x.get('iconType')),
+        'headerText': r('header_message', _parse_text),
+        'messageText': r('message', _parse_text),
 
         # removeBannerForLiveChatCommand
         'targetActionId': 'target_message_id',
@@ -981,6 +991,8 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         # banner parsed elsewhere
         'header', 'contents', 'actionId',
+        # gift redemption banner subcontainer, should ignore
+        'containerWidth', 'containerHeight',
 
         # tooltipRenderer
         'dismissStrategy', 'suggestedPosition', 'promoConfig'
@@ -1049,6 +1061,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
             'liveChatBannerRedirectRenderer',
             'liveChatBannerHeaderRenderer',
             'liveChatTextMessageRenderer',
+            'liveChatSponsorshipsGiftRedemptionBannerRenderer',
         ]
     }
 
