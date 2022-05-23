@@ -61,6 +61,9 @@ class YouTubeChatDownloader(BaseChatDownloader):
         super().__init__(**kwargs)
         self._initialize_consent()
 
+    def ContinueException(RuntimeError):
+        pass
+
     _NAME = 'youtube.com'
 
     _SITE_DEFAULT_PARAMS = {
@@ -1643,6 +1646,203 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         return headers
 
+    def _process_actions(self, action, offset):
+        data = {}
+
+        # if it is a replay chat item action, must re-base it
+        replay_chat_item_action = action.get(
+            'replayChatItemAction')
+        if replay_chat_item_action:
+            offset_time = replay_chat_item_action.get(
+                'videoOffsetTimeMsec')
+            if offset_time:
+                data['time_in_seconds'] = float(offset_time) / 1000
+
+            action = replay_chat_item_action['actions'][0]
+
+        action.pop('clickTrackingParams', None)
+        original_action_type = try_get_first_key(action)
+
+        data['action_type'] = camel_case_split(
+            remove_suffixes(original_action_type, ('Action', 'Command')))
+
+        original_message_type = None
+        original_item = {}
+
+        # We now parse the info and get the message
+        # type based on the type of action
+        if original_action_type in self._KNOWN_ITEM_ACTION_TYPES:
+            original_item = multi_get(
+                action, original_action_type, 'item')
+
+            original_message_type = try_get_first_key(
+                original_item)
+            data = self._parse_item(original_item, data, offset)
+
+        elif original_action_type in self._KNOWN_REMOVE_ACTION_TYPES:
+            original_item = action
+            if original_action_type == 'markChatItemAsDeletedAction':
+                original_message_type = 'deletedMessage'
+            else:  # markChatItemsByAuthorAsDeletedAction
+                original_message_type = 'banUser'
+
+            data = self._parse_item(original_item, data, offset)
+
+        elif original_action_type in self._KNOWN_REPLACE_ACTION_TYPES:
+            original_item = multi_get(
+                action, original_action_type, 'replacementItem')
+
+            original_message_type = try_get_first_key(
+                original_item)
+            data = self._parse_item(original_item, data, offset)
+
+        elif original_action_type in self._KNOWN_TOOLTIP_ACTION_TYPES:
+            original_item = multi_get(
+                action, original_action_type, 'tooltip')
+
+            original_message_type = try_get_first_key(
+                original_item)
+            data = self._parse_item(original_item, data, offset)
+
+        elif original_action_type in self._KNOWN_ADD_BANNER_TYPES:
+            original_item = multi_get(
+                action, original_action_type, 'bannerRenderer')
+
+            if original_item:
+                original_message_type = try_get_first_key(
+                    original_item)
+
+                header = original_item[original_message_type].get(
+                    'header') or None
+                parsed_header = None
+                if not header:
+                    log('warning', f'Could not extract header from banner (handled?): {original_item}')
+                else:
+                    parsed_header = self._parse_item(
+                        header, offset=offset)
+                if parsed_header:
+                    header_message = parsed_header.get('message')
+                else:
+                    header_message = None
+
+                contents = original_item[original_message_type].get(
+                    'contents') or original_item
+                parsed_contents = None
+                if original_item is contents:
+                    log('warning', f'Could not extract contents from banner: {original_item}')
+                    parsed_contents = self._parse_item(
+                        contents, offset=offset)
+                if parsed_contents:
+                    banner_message = parsed_contents.get('bannerMessage')
+                else:
+                    banner_message = None
+
+                data.update(parsed_header or {})
+                data.update(parsed_contents or {})
+                if header_message:
+                    data['header_message'] = header_message
+                if banner_message:
+                    data['message'] = banner_message
+                else:
+                    debug_log('no message, trying higher up', data)
+                    parsed_contents = self._parse_item(
+                        original_item, data, offset)
+                    # FIXME: this still feels very yucky.
+                    if parsed_contents.get('message_type') == 'banner_redirect':
+                        original_message_type = 'liveChatBannerRedirectRenderer'
+            else:
+                debug_log(
+                    'No bannerRenderer item',
+                    f'Action type: {original_action_type}',
+                    f'Action: {action}',
+                    f'Parsed data: {data}'
+                )
+
+        elif original_action_type in self._KNOWN_REMOVE_BANNER_TYPES:
+            original_item = action
+            original_message_type = 'removeBanner'
+            data = self._parse_item(original_item, data, offset)
+
+        elif original_action_type in self._KNOWN_POLL_ACTION_TYPES:
+            original_item = multi_get(
+                action, original_action_type, 'panelToShow') or {}
+            original_message_type = 'poll'  # fake name
+            if not original_item:
+                original_item = multi_get(
+                    action, original_action_type, 'pollToUpdate') or {}
+                original_message_type = 'pollUpdate'  # fake name
+            data = self._parse_item(original_item or action, data, offset)
+            if not original_item:
+                panel_id = multi_get(
+                    action, original_action_type, 'targetPanelId') or {}
+                if panel_id:
+                    original_message_type = 'closePanel'  # fake name
+                    data.update({'target_panel_id': panel_id})
+                else:
+                    original_message_type = try_get_first_key(
+                        original_item) or ''
+
+        elif original_action_type in self._KNOWN_IGNORE_ACTION_TYPES:
+            # ignore these types
+            raise self.ContinueException('continue')
+
+        else:
+            # not processing these
+            debug_log(
+                f'Unknown action: {original_action_type}',
+                action,
+                data
+            )
+
+        test_for_missing_keys = original_item.get(
+            original_message_type, {}).keys()
+        missing_keys = test_for_missing_keys - self._KNOWN_KEYS
+
+        if not data:
+            debug_log(
+                f'Parse of action returned empty results: {original_action_type}',
+                action
+            )
+
+        if missing_keys:
+            debug_log(
+                f'Missing keys found: {missing_keys}',
+                f'Message type: {original_message_type}',
+                f'Action type: {original_action_type}',
+                f'Action: {action}',
+                f'Parsed data: {data}'
+            )
+
+        if original_message_type:
+
+            new_index = remove_prefixes(
+                original_message_type, 'liveChat')
+            new_index = remove_suffixes(new_index, 'Renderer')
+            data['message_type'] = camel_case_split(new_index)
+
+            # TODO add option to keep placeholder items
+            if original_message_type in self._KNOWN_IGNORE_MESSAGE_TYPES:
+                raise self.ContinueException('continue')
+                # skip placeholder items
+            elif original_message_type not in self._KNOWN_ACTION_TYPES[original_action_type]:
+                debug_log(
+                    f'Unknown message type "{original_message_type}" for action "{original_action_type}"',
+                    f"New message type: {data['message_type']}",
+                    f'Action: {action}',
+                    f'Parsed data: {data}'
+                )
+
+        else:  # no type # can ignore message
+            debug_log(
+                'No message type',
+                f'Action type: {original_action_type}',
+                f'Action: {action}',
+                f'Parsed data: {data}'
+            )
+            raise self.ContinueException('continue')
+
+        return data
+
     def _get_chat_messages(self, initial_info, ytcfg, params):
 
         initial_continuation_info = initial_info.get('continuation_info') or {}
@@ -1765,235 +1965,47 @@ class YouTubeChatDownloader(BaseChatDownloader):
             actions = info.get('actions') or []
 
             if actions:
-                for action in actions:
-                    data = {}
+                try:
+                    for action in actions:
+                        data = self._process_actions(offset)
+                        # check whether to skip this message or not, based on its type
 
-                    # if it is a replay chat item action, must re-base it
-                    replay_chat_item_action = action.get(
-                        'replayChatItemAction')
-                    if replay_chat_item_action:
-                        offset_time = replay_chat_item_action.get(
-                            'videoOffsetTimeMsec')
-                        if offset_time:
-                            data['time_in_seconds'] = float(offset_time) / 1000
-
-                        action = replay_chat_item_action['actions'][0]
-
-                    action.pop('clickTrackingParams', None)
-                    original_action_type = try_get_first_key(action)
-
-                    data['action_type'] = camel_case_split(
-                        remove_suffixes(original_action_type, ('Action', 'Command')))
-
-                    original_message_type = None
-                    original_item = {}
-
-                    # We now parse the info and get the message
-                    # type based on the type of action
-                    if original_action_type in self._KNOWN_ITEM_ACTION_TYPES:
-                        original_item = multi_get(
-                            action, original_action_type, 'item')
-
-                        original_message_type = try_get_first_key(
-                            original_item)
-                        data = self._parse_item(original_item, data, offset)
-
-                    elif original_action_type in self._KNOWN_REMOVE_ACTION_TYPES:
-                        original_item = action
-                        if original_action_type == 'markChatItemAsDeletedAction':
-                            original_message_type = 'deletedMessage'
-                        else:  # markChatItemsByAuthorAsDeletedAction
-                            original_message_type = 'banUser'
-
-                        data = self._parse_item(original_item, data, offset)
-
-                    elif original_action_type in self._KNOWN_REPLACE_ACTION_TYPES:
-                        original_item = multi_get(
-                            action, original_action_type, 'replacementItem')
-
-                        original_message_type = try_get_first_key(
-                            original_item)
-                        data = self._parse_item(original_item, data, offset)
-
-                    elif original_action_type in self._KNOWN_TOOLTIP_ACTION_TYPES:
-                        original_item = multi_get(
-                            action, original_action_type, 'tooltip')
-
-                        original_message_type = try_get_first_key(
-                            original_item)
-                        data = self._parse_item(original_item, data, offset)
-
-                    elif original_action_type in self._KNOWN_ADD_BANNER_TYPES:
-                        original_item = multi_get(
-                            action, original_action_type, 'bannerRenderer')
-
-                        if original_item:
-                            original_message_type = try_get_first_key(
-                                original_item)
-
-                            header = original_item[original_message_type].get(
-                                'header') or None
-                            parsed_header = None
-                            if not header:
-                                log('warning', f'Could not extract header from banner (handled?): {original_item}')
-                            else:
-                                parsed_header = self._parse_item(
-                                    header, offset=offset)
-                            if parsed_header:
-                                header_message = parsed_header.get('message')
-                            else:
-                                header_message = None
-
-                            contents = original_item[original_message_type].get(
-                                'contents') or original_item
-                            parsed_contents = None
-                            if original_item is contents:
-                                log('warning', f'Could not extract contents from banner: {original_item}')
-                                parsed_contents = self._parse_item(
-                                    contents, offset=offset)
-                            if parsed_contents:
-                                banner_message = parsed_contents.get('bannerMessage')
-                            else:
-                                banner_message = None
-
-                            data.update(parsed_header or {})
-                            data.update(parsed_contents or {})
-                            if header_message:
-                                data['header_message'] = header_message
-                            if banner_message:
-                                data['message'] = banner_message
-                            else:
-                                debug_log('no message, trying higher up', data)
-                                parsed_contents = self._parse_item(
-                                    original_item, data, offset)
-                                # FIXME: this still feels very yucky.
-                                if parsed_contents.get('message_type') == 'banner_redirect':
-                                    original_message_type = 'liveChatBannerRedirectRenderer'
-                        else:
-                            debug_log(
-                                'No bannerRenderer item',
-                                f'Action type: {original_action_type}',
-                                f'Action: {action}',
-                                f'Parsed data: {data}'
-                            )
-
-                    elif original_action_type in self._KNOWN_REMOVE_BANNER_TYPES:
-                        original_item = action
-                        original_message_type = 'removeBanner'
-                        data = self._parse_item(original_item, data, offset)
-
-                    elif original_action_type in self._KNOWN_POLL_ACTION_TYPES:
-                        original_item = multi_get(
-                            action, original_action_type, 'panelToShow') or {}
-                        original_message_type = 'poll'  # fake name
-                        if not original_item:
-                            original_item = multi_get(
-                                action, original_action_type, 'pollToUpdate') or {}
-                            original_message_type = 'pollUpdate'  # fake name
-                        data = self._parse_item(original_item or action, data, offset)
-                        if not original_item:
-                            panel_id = multi_get(
-                                action, original_action_type, 'targetPanelId') or {}
-                            if panel_id:
-                                original_message_type = 'closePanel'  # fake name
-                                data.update({'target_panel_id': panel_id})
-                            else:
-                                original_message_type = try_get_first_key(
-                                    original_item) or ''
-
-                    elif original_action_type in self._KNOWN_IGNORE_ACTION_TYPES:
-                        continue  # ignore these
-
-                    else:
-                        # not processing these
-                        debug_log(
-                            f'Unknown action: {original_action_type}',
-                            action,
-                            data
+                        to_add = self._must_add_item(
+                            data,
+                            self._MESSAGE_GROUPS,
+                            messages_groups_to_add,
+                            messages_types_to_add
                         )
 
-                    test_for_missing_keys = original_item.get(
-                        original_message_type, {}).keys()
-                    missing_keys = test_for_missing_keys - self._KNOWN_KEYS
-
-                    if not data:
-                        debug_log(
-                            f'Parse of action returned empty results: {original_action_type}',
-                            action
-                        )
-
-                    if missing_keys:
-                        debug_log(
-                            f'Missing keys found: {missing_keys}',
-                            f'Message type: {original_message_type}',
-                            f'Action type: {original_action_type}',
-                            f'Action: {action}',
-                            f'Parsed data: {data}'
-                        )
-
-                    if original_message_type:
-
-                        new_index = remove_prefixes(
-                            original_message_type, 'liveChat')
-                        new_index = remove_suffixes(new_index, 'Renderer')
-                        data['message_type'] = camel_case_split(new_index)
-
-                        # TODO add option to keep placeholder items
-                        if original_message_type in self._KNOWN_IGNORE_MESSAGE_TYPES:
+                        if not to_add:
                             continue
-                            # skip placeholder items
-                        elif original_message_type not in self._KNOWN_ACTION_TYPES[original_action_type]:
-                            debug_log(
-                                f'Unknown message type "{original_message_type}" for action "{original_action_type}"',
-                                f"New message type: {data['message_type']}",
-                                f'Action: {action}',
-                                f'Parsed data: {data}'
-                            )
 
-                    else:  # no type # can ignore message
-                        debug_log(
-                            'No message type',
-                            f'Action type: {original_action_type}',
-                            f'Action: {action}',
-                            f'Parsed data: {data}'
-                        )
-                        continue
+                        # if from a replay, check whether to skip this message or not, based on its time
+                        if is_replay:
+                            # assume message is at beginning if it does not have a time component
+                            time_in_seconds = data.get(
+                                'time_in_seconds', 0) + (offset or 0)
 
-                    # check whether to skip this message or not, based on its type
+                            before_start = start_time is not None and time_in_seconds < start_time
+                            after_end = end_time is not None and time_in_seconds > end_time
 
-                    to_add = self._must_add_item(
-                        data,
-                        self._MESSAGE_GROUPS,
-                        messages_groups_to_add,
-                        messages_types_to_add
-                    )
+                            if first_time and before_start:
+                                continue  # first time and invalid start time
+                            elif before_start or after_end:
+                                return  # while actually searching, if time is invalid
 
-                    if not to_add:
-                        continue
+                        # try to reconstruct time in seconds from timestamp and stream start
+                        # if data.get('time_in_seconds') is None and data.get('timestamp') and stream_start_time:
+                        #     data['time_in_seconds'] = (data['timestamp'] - stream_start_time)/1e6
+                        #     data['time_text'] = seconds_to_time(int(data['time_in_seconds']))
 
-                    # if from a replay, check whether to skip this message or not, based on its time
-                    if is_replay:
-                        # assume message is at beginning if it does not have a time component
-                        time_in_seconds = data.get(
-                            'time_in_seconds', 0) + (offset or 0)
+                        message_count += 1
+                        yield data
 
-                        before_start = start_time is not None and time_in_seconds < start_time
-                        after_end = end_time is not None and time_in_seconds > end_time
-
-                        if first_time and before_start:
-                            continue  # first time and invalid start time
-                        elif before_start or after_end:
-                            return  # while actually searching, if time is invalid
-
-                    # try to reconstruct time in seconds from timestamp and stream start
-                    # if data.get('time_in_seconds') is None and data.get('timestamp') and stream_start_time:
-                    #     data['time_in_seconds'] = (data['timestamp'] - stream_start_time)/1e6
-                    #     data['time_text'] = seconds_to_time(int(data['time_in_seconds']))
-
-                    message_count += 1
-                    yield data
-
-                log('debug', f'Total number of messages: {message_count}')
+                    log('debug', f'Total number of messages: {message_count}')
+                except self.ContinueException:
+                    # passed 'continue'
+                    continue
             elif is_replay:
                 # no more actions to process in a chat replay
                 break
