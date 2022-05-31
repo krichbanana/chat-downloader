@@ -1,5 +1,7 @@
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from http.cookiejar import (MozillaCookieJar, Cookie)
 import os
 import re
@@ -424,6 +426,9 @@ class BaseChatDownloader:
 
         # Start a new session
         self.session = requests.Session()
+        retries = Retry(3, allowed_methods=Retry.DEFAULT_ALLOWED_METHODS.union({'POST'}))
+        self.session.mount('http://', HTTPAdapter(max_retries=retries))
+        self.session.mount('https://', HTTPAdapter(max_retries=retries))
 
         headers = kwargs.get('headers')
         if headers is None:
