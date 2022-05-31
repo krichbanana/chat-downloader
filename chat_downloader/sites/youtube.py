@@ -1550,7 +1550,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
             playability_status = player_response_info.get(
                 'playabilityStatus') or {}
             error_screen = playability_status.get('errorScreen')
-            if error_screen:  # There is a error screen visible
+            if error_screen and playability_status.get('status') != 'LIVE_STREAM_OFFLINE':  # There is a error screen visible (avoid trailers)
                 error_reasons = {
                     'reason': '',
                     'subreason': '',
