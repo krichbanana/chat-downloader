@@ -61,7 +61,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
         super().__init__(**kwargs)
         self._initialize_consent()
 
-    def ContinueException(RuntimeError):
+    class ContinueException(RuntimeError):
         pass
 
     _NAME = 'youtube.com'
@@ -1659,7 +1659,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         return headers
 
-    def _process_actions(self, action, offset):
+    def _process_action(self, action, offset):
         data = {}
 
         # if it is a replay chat item action, must re-base it
@@ -1980,7 +1980,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
             if actions:
                 try:
                     for action in actions:
-                        data = self._process_actions(offset)
+                        data = self._process_action(action, offset)
                         # check whether to skip this message or not, based on its type
 
                         to_add = self._must_add_item(
