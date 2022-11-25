@@ -1,3 +1,4 @@
+import traceback
 
 from .common import (
     BaseChatDownloader,
@@ -5,6 +6,8 @@ from .common import (
     Remapper as r,
     Image
 )
+
+from ..debugging import set_log_level
 
 from ..errors import (
     ChatDownloaderError,
@@ -43,7 +46,7 @@ from ..utils.core import (
     get_title_of_webpage
 )
 
-from ..debugging import (log, debug_log, set_log_level)
+from ..debugging import (log, debug_log)
 
 import json
 import time
@@ -60,9 +63,6 @@ class YouTubeChatDownloader(BaseChatDownloader):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._initialize_consent()
-
-    class ContinueException(RuntimeError):
-        pass
 
     _NAME = 'youtube.com'
 
@@ -456,7 +456,6 @@ class YouTubeChatDownloader(BaseChatDownloader):
             'banner',
             'banner_header',
             'banner_redirect',
-            # 'sponsorships_gift_redemption_banner', => maps to 'banner' for now
         ],
         'polls': [
             'poll',
@@ -464,7 +463,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
         ],
 
         'donations': [
-            'donation_announcement',
+            'donation_announcement'
         ],
         'engagement': [
             # message saying live chat replay is on
@@ -656,17 +655,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
         return choices
 
     @ staticmethod
-    def _convert_message_type(original_message_type):
-        new_index = remove_prefixes(
-            original_message_type, 'liveChat')
-        new_index = remove_suffixes(new_index, 'Renderer')
-        return camel_case_split(new_index)
-
-    @ staticmethod
     def _parse_item(item, info=None, offset=0):
-        if not isinstance(item, dict):
-            return {}
-
         if info is None:
             info = {}
         # info is starting point
@@ -703,21 +692,15 @@ class YouTubeChatDownloader(BaseChatDownloader):
             debug_log('got nested header')
             info.update(YouTubeChatDownloader._parse_item(
                 header, offset=offset))
-            header_message = info.get('message')
-            if header_message is not None:
-                debug_log(f"original header_message: {info.get('header_message')}")
-                debug_log(f'new message as header_message: {header_message}')
-                info['header_message'] = header_message
 
         contents = item_info.get('contents')
         if contents:
             debug_log('got nested contents')
             info.update(YouTubeChatDownloader._parse_item(
                 contents, offset=offset))
-            original_contents_message_type = try_get_first_key(contents)
-            if original_contents_message_type:
+            if contents.get('liveChatBannerRedirectRenderer'):
                 debug_log('overriding message type')
-                info['message_type'] = YouTubeChatDownloader._convert_message_type(original_contents_message_type)
+                info['message_type'] = 'banner_redirect'  # FIXME don't do this directly, and not here
 
         BaseChatDownloader._move_to_dict(info, 'author')
 
@@ -896,6 +879,8 @@ class YouTubeChatDownloader(BaseChatDownloader):
         'icon': r('icon', lambda x: x.get('iconType')),
         'authorBadges': r('author_badges', _parse_badges),
 
+        'headerOverlayImage': r('header_overlay_image', _parse_thumbnails),
+
         # stickers
         'sticker': r('sticker_images', _parse_thumbnails),
 
@@ -935,15 +920,8 @@ class YouTubeChatDownloader(BaseChatDownloader):
         'targetId': 'target_message_id',
         'isStackable': 'is_stackable',
         'backgroundType': 'background_type',
-        # gift redemption banner
-        'gifterPhoto': r('gifter_photo', _parse_thumbnails),
-        'channelAvatar': r('channel_avatar', _parse_item),
-        'channelImage': r('channel_image', _parse_thumbnails),
-        'imageOverlay': r('image_overlay', _parse_thumbnails),
-        'imageOverlayDarkMode': r('image_overlay_dark_mode', _parse_thumbnails),
-        'badgeIcon': r('badge_icon', lambda x: x.get('iconType')),
-        'headerText': r('header_message', _parse_text),
-        'messageText': r('message', _parse_text),
+        'bannerProperties': 'banner_properties',
+        'autoCollapseDelay': 'auto_collapse_delay',
 
         # removeBannerForLiveChatCommand
         'targetActionId': 'target_message_id',
@@ -971,6 +949,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
         # paid_message
         'authorNameTextColor', 'timestampColor', 'bodyBackgroundColor',
         'headerTextColor', 'headerBackgroundColor', 'bodyTextColor',
+        'textInputBackgroundColor',
 
         # paid_sticker
         'backgroundColor', 'moneyChipTextColor', 'moneyChipBackgroundColor',
@@ -1004,8 +983,6 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         # banner parsed elsewhere
         'header', 'contents', 'actionId',
-        # gift redemption banner subcontainer, should ignore
-        'containerWidth', 'containerHeight',
 
         # tooltipRenderer
         'dismissStrategy', 'suggestedPosition', 'promoConfig'
@@ -1063,8 +1040,14 @@ class YouTubeChatDownloader(BaseChatDownloader):
         'markChatItemsByAuthorAsDeletedAction': [  # TODO ban?
             'banUser'  # deletedStateMessage
         ],
+        'removeChatItemByAuthorAction': [
+            'banUser'  # new version of the above?
+        ],
         'markChatItemAsDeletedAction': [
             'deletedMessage'  # deletedStateMessage
+        ],
+        'removeChatItemAction': [
+            'deletedMessage'  # new version of the above?
         ]
     }
 
@@ -1074,7 +1057,6 @@ class YouTubeChatDownloader(BaseChatDownloader):
             'liveChatBannerRedirectRenderer',
             'liveChatBannerHeaderRenderer',
             'liveChatTextMessageRenderer',
-            'liveChatSponsorshipsGiftRedemptionBannerRenderer',
         ]
     }
 
@@ -1208,6 +1190,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
     _VIDEO_REMAPPING = {
         'videoId': 'video_id',
+        'lengthText': r('duration', lambda x: YouTubeChatDownloader._parse_text(x)),
         'title': r('title', lambda x: YouTubeChatDownloader._parse_runs(x)['message']),
         'viewCountText': r('view_count', lambda x: YouTubeChatDownloader._parse_text(x)),
         'shortViewCountText': r('short_view_count', lambda x: YouTubeChatDownloader._parse_text(x)),
@@ -1219,6 +1202,13 @@ class YouTubeChatDownloader(BaseChatDownloader):
     def _parse_video(video_renderer):
         return r.remap_dict(video_renderer, YouTubeChatDownloader._VIDEO_REMAPPING)
 
+    _VIDEO_TYPE_REMAPPING = {
+        'all': 'all',
+        'live': 'streams',
+        'upload': 'videos',
+        'short': 'shorts',
+    }
+
     _VIDEO_STATUS_REMAPPING = {
         'all': 'all',
         'live': (501, 'Live now'),
@@ -1226,7 +1216,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
         'past': (503, 'Past live streams')
     }
 
-    def get_user_videos(self, channel_id=None, user_id=None, custom_username=None, video_status='all', params=None):
+    def _get_user_videos_old(self, channel_id=None, user_id=None, custom_username=None, video_status='all', params=None):
         """Retrieve all videos listed on the user's channel
 
         If more than one of `channel_id`, `user_id` and `custom_username`
@@ -1341,6 +1331,153 @@ class YouTubeChatDownloader(BaseChatDownloader):
             if not continuation:
                 break
 
+    def get_user_videos(self, channel_id=None, user_id=None, custom_username=None, video_status='all', video_type='live', do_cont=False, params=None):
+        """Retrieve all videos listed on the user's channel
+
+        If more than one of `channel_id`, `user_id` and `custom_username`
+        are specifed, the first one specified will be returned.
+
+        :param channel_id: The user's channel ID, defaults to None.
+            (e.g., https://www.youtube.com/channel/<channel_id>)
+        :type channel_id: str, optional
+        :param user_id: The user's ID, defaults to None
+            (e.g., https://www.youtube.com/user/<user_id>)
+        :type user_id: str, optional
+        :param custom_username: [description], defaults to None
+            (e.g., https://www.youtube.com/c/<custom_username>)
+        :type custom_username: str, optional
+        :param video_status: Determines which videos will be retrieved, defaults to 'all'.
+            Must be one of 'all', 'live', 'upcoming' or 'past'. (obsolete)
+        :type video_status: str, optional
+        :param params: Additional program parameters, defaults to None
+        :type params: dict, optional
+        :raises ValueError: If no user is specified or an invalid video_status is specified
+        :raises UserNotFound: If the user cannot be found
+        :raises NoVideos: If the channel has no videos
+        :yield: The next video
+        :rtype: dict
+        """
+
+        _id = ''
+        _type = ''
+        if channel_id:
+            _id = channel_id
+            _type = 'channel'
+        elif user_id:
+            _id = user_id
+            _type = 'user'
+        elif custom_username:
+            _id = custom_username
+            _type = 'c'
+        else:
+            raise ValueError('No user type specified.')
+
+        # live, past, upcoming
+        vid_status = self._VIDEO_STATUS_REMAPPING.get(video_status.lower())
+        vid_type = self._VIDEO_TYPE_REMAPPING.get(video_type.lower())
+
+        if not vid_type:
+            raise ValueError(
+                f'Invalid argument passed for video_type. Must be one of {set(self._VIDEO_TYPE_REMAPPING.keys())}')
+
+        if not video_status:
+            raise ValueError(
+                f'Invalid argument passed for video_status. Must be one of {set(self._VIDEO_STATUS_REMAPPING.keys())}')
+
+        user_url = f'https://www.youtube.com/{_type}/{_id}'
+
+        try:
+            if video_type == 'all':
+                saved_exception = None
+                has_results = False
+                for end in ['streams', 'videos']:
+                    try:
+                        vids_url = f'{user_url}/{end}'
+                        yield from self._extract_tab_videos(user_url, vids_url, video_status, video_type, do_cont, params=params)
+                    except NoVideos as nv:
+                        saved_exception = nv
+                    else:
+                        has_results = True
+                if saved_exception and not has_results:
+                    raise saved_exception
+            else:
+                vids_url = f'{user_url}/{self._VIDEO_TYPE_REMAPPING[video_type]}'
+                yield from self._extract_tab_videos(user_url, vids_url, video_status, video_type, do_cont, params=params)
+        except UserNotFound as unf:
+            if '(no video list)' in unf.args[0]:
+                yield from self._get_user_videos_old(channel_id, user_id, custom_username, video_status, params=params)
+
+    def _extract_tab_videos(self, user_url, tab_url, video_status='all', video_type='live', do_cont=False, params=None):
+            yt_info, ytcfg, _ = self._get_initial_info(tab_url, params)
+
+            tabs = multi_get(
+                yt_info, 'contents', 'twoColumnBrowseResultsRenderer', 'tabs') or []
+            for tab in tabs:
+                list_renderer = multi_get(tab, 'tabRenderer', 'content', 'richGridRenderer')
+                if list_renderer:
+                    break
+
+            if not tabs:
+                raise UserNotFound(f'Unable to find user (no tabs): "{user_url}"')
+            if not list_renderer:
+                raise UserNotFound(f'Unable to find user (no video list): "{user_url}"')
+
+            if 'header' not in list_renderer:
+                raise NoVideos('This channel has no videos.')
+
+            # Check that the returned grid is what was asked for
+            # YouTube tries to correct your mistake by selecting the uploads tab
+            # if you try to access a tab that is not visible. (obsolete)
+            if False:
+                log('debug',
+                    f'"{vid_type[1]}" tab is not visible for this channel (i.e. there are no such videos).')
+                return
+
+            feeds = multi_get(list_renderer, 'header', 'feedFilterChipBarRenderer', 'contents')
+            feed = [feed['chipCloudChipRenderer'] for feed in feeds if multi_get(feed, 'chipCloudChipRenderer', 'isSelected')][0]
+            feed_name = multi_get(feed, 'text', 'simpleText')
+
+            api_key = ytcfg.get('INNERTUBE_API_KEY')
+            continuation_url = self._YOUTUBE_BROWSE_API_TEMPLATE.format(api_key)
+
+            # innertube_context =
+            # print('innertube_context', innertube_context)
+            continuation_params = {
+                'context': ytcfg.get('INNERTUBE_CONTEXT') or {}
+            }
+            continuation = None
+            first_time = True
+            while True:
+                if first_time:
+                    items = multi_get(list_renderer, 'contents')
+                    first_time = False
+                else:
+                    if not do_cont:
+                        break
+
+                    continuation_params['continuation'] = continuation
+                    yt_info = self._get_continuation_info(
+                        continuation_url, params, json=continuation_params)
+                    items = multi_get(yt_info, 'onResponseReceivedActions',
+                                      0, 'appendContinuationItemsAction', 'continuationItems')
+
+                if not items:
+                    break
+
+                continuation = None
+                for item in items:
+                    vid = multi_get(item, 'richItemRenderer', 'content', 'videoRenderer')
+                    continuation_item = item.get('continuationItemRenderer')
+
+                    if vid:
+                        yield self._parse_video(vid)
+                    elif continuation_item:
+                        continuation = multi_get(
+                            continuation_item, 'continuationEndpoint', 'continuationCommand', 'token')
+
+                if not continuation:
+                    break
+
     def get_playlist_items(self, playlist_url, params=None):
 
         yt_initial_data, ytcfg, player_response_info = self._get_initial_info(
@@ -1397,6 +1534,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
         return f'SAPISIDHASH {time_now}_{sapisidhash}'
 
     def _get_continuation_info(self, continuation_url, program_params, **post_kwargs):
+        log('debug', 'Getting continuation_info')
         if program_params is None:
             program_params = {}
         max_attempts = program_params.get('max_attempts', 1)
@@ -1432,6 +1570,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
             params = {}
 
         max_attempts = params.get('max_attempts', 1)
+        # log('warning', f'{max_attempts = }')
         for attempt_number in attempts(max_attempts):
             try:
                 response = self._session_get(url)
@@ -1449,7 +1588,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
                         continue
 
                 if not yt_initial_data:  # Fatal error
-                    log('debug', html)
+                    log('warning', html)
                     raise ParsingError(f'Unable to parse initial video data')
 
                 cfg = regex_search(html, self._YT_CFG_RE)
@@ -1672,173 +1811,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         return headers
 
-    def _process_action(self, action, offset):
-        data = {}
-
-        # if it is a replay chat item action, must re-base it
-        replay_chat_item_action = action.get(
-            'replayChatItemAction')
-        if replay_chat_item_action:
-            offset_time = replay_chat_item_action.get(
-                'videoOffsetTimeMsec')
-            if offset_time:
-                data['time_in_seconds'] = float(offset_time) / 1000
-
-            action = replay_chat_item_action['actions'][0]
-
-        action.pop('clickTrackingParams', None)
-        original_action_type = try_get_first_key(action)
-
-        data['action_type'] = camel_case_split(
-            remove_suffixes(original_action_type, ('Action', 'Command')))
-
-        original_message_type = None
-        original_item = {}
-
-        # We now parse the info and get the message
-        # type based on the type of action
-        if original_action_type in self._KNOWN_ITEM_ACTION_TYPES:
-            original_item = multi_get(
-                action, original_action_type, 'item')
-
-            original_message_type = try_get_first_key(
-                original_item)
-            data = self._parse_item(original_item, data, offset)
-
-        elif original_action_type in self._KNOWN_REMOVE_ACTION_TYPES:
-            original_item = action
-            if original_action_type == 'markChatItemAsDeletedAction':
-                original_message_type = 'deletedMessage'
-            else:  # markChatItemsByAuthorAsDeletedAction
-                original_message_type = 'banUser'
-
-            data = self._parse_item(original_item, data, offset)
-
-        elif original_action_type in self._KNOWN_REPLACE_ACTION_TYPES:
-            original_item = multi_get(
-                action, original_action_type, 'replacementItem')
-
-            original_message_type = try_get_first_key(
-                original_item)
-            data = self._parse_item(original_item, data, offset)
-
-        elif original_action_type in self._KNOWN_TOOLTIP_ACTION_TYPES:
-            original_item = multi_get(
-                action, original_action_type, 'tooltip')
-
-            original_message_type = try_get_first_key(
-                original_item)
-            data = self._parse_item(original_item, data, offset)
-
-        elif original_action_type in self._KNOWN_ADD_BANNER_TYPES:
-            original_item = multi_get(
-                action, original_action_type, 'bannerRenderer')
-
-            if original_item:
-                original_message_type = try_get_first_key(
-                    original_item)
-
-                parsed_contents = self._parse_item(
-                    original_item, data, offset)
-
-                # FIXME: this still feels very yucky.
-                if parsed_contents.get('message_type') == 'banner_redirect':
-                    original_message_type = 'liveChatBannerRedirectRenderer'
-            else:
-                debug_log(
-                    'No bannerRenderer item',
-                    f'Action type: {original_action_type}',
-                    f'Action: {action}',
-                    f'Parsed data: {data}'
-                )
-
-        elif original_action_type in self._KNOWN_REMOVE_BANNER_TYPES:
-            original_item = action
-            original_message_type = 'removeBanner'
-            data = self._parse_item(original_item, data, offset)
-
-        elif original_action_type in self._KNOWN_POLL_ACTION_TYPES:
-            original_item = multi_get(
-                action, original_action_type, 'panelToShow') or {}
-            original_message_type = 'poll'  # fake name
-            if not original_item:
-                original_item = multi_get(
-                    action, original_action_type, 'pollToUpdate') or {}
-                original_message_type = 'pollUpdate'  # fake name
-            data = self._parse_item(original_item or action, data, offset)
-            if not original_item:
-                panel_id = multi_get(
-                    action, original_action_type, 'targetPanelId') or {}
-                if panel_id:
-                    original_message_type = 'closePanel'  # fake name
-                    data.update({'target_panel_id': panel_id})
-                else:
-                    original_message_type = try_get_first_key(
-                        original_item) or ''
-
-        elif original_action_type in self._KNOWN_IGNORE_ACTION_TYPES:
-            # ignore these types
-            raise self.ContinueException('continue')
-
-        else:
-            # not processing these
-            debug_log(
-                f'Unknown action: {original_action_type}',
-                action,
-                data
-            )
-
-        test_for_missing_keys = original_item.get(
-            original_message_type, {}).keys()
-        missing_keys = test_for_missing_keys - self._KNOWN_KEYS
-
-        if not data:
-            debug_log(
-                f'Parse of action returned empty results: {original_action_type}',
-                action
-            )
-
-        if missing_keys:
-            debug_log(
-                f'Missing keys found: {missing_keys}',
-                f'Message type: {original_message_type}',
-                f'Action type: {original_action_type}',
-                f'Action: {action}',
-                f'Parsed data: {data}'
-            )
-
-        if original_message_type:
-            saved_message_type = data.get('message_type')
-            if saved_message_type:
-                debug_log(f'set message type found: {saved_message_type}')
-            if saved_message_type != 'sponsorships_gift_redemption_banner':
-                data['message_type'] = YouTubeChatDownloader._convert_message_type(original_message_type)
-
-            # TODO add option to keep placeholder items
-            if original_message_type in self._KNOWN_IGNORE_MESSAGE_TYPES:
-                raise self.ContinueException('continue')
-                # skip placeholder items
-            elif original_message_type not in self._KNOWN_ACTION_TYPES[original_action_type]:
-                debug_log(
-                    f'Unknown message type "{original_message_type}" for action "{original_action_type}"',
-                    f"New message type: {data['message_type']}",
-                    f'Action: {action}',
-                    f'Parsed data: {data}'
-                )
-
-        else:  # no type # can ignore message
-            debug_log(
-                'No message type',
-                f'Action type: {original_action_type}',
-                f'Action: {action}',
-                f'Parsed data: {data}'
-            )
-            raise self.ContinueException('continue')
-
-        return data
-
     def _get_chat_messages(self, initial_info, ytcfg, params):
-
         initial_continuation_info = initial_info.get('continuation_info') or {}
         if len(initial_continuation_info) < 2:
             raise NoContinuation(
@@ -1904,11 +1877,13 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         innertube_context = ytcfg.get('INNERTUBE_CONTEXT') or {}
 
-        message_count = 0
+        message_count = old_message_count = 0
         first_time = True
         click_tracking_params = None
 
         while True:
+            set_log_level('info')
+
             continuation_params = {
                 'context': innertube_context,
                 'continuation': continuation
@@ -1952,6 +1927,9 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
             info = multi_get(yt_info, 'continuationContents',
                              'liveChatContinuation')
+
+            set_log_level('debug')
+
             if not info:
                 log('debug', f'No continuation information found: {yt_info}')
                 return
@@ -1959,47 +1937,246 @@ class YouTubeChatDownloader(BaseChatDownloader):
             actions = info.get('actions') or []
 
             if actions:
-                try:
-                    for action in actions:
-                        data = self._process_action(action, offset)
-                        # check whether to skip this message or not, based on its type
+                old_message_count = message_count
+                for action in actions:
+                    data = {}
 
-                        to_add = self._must_add_item(
-                            data,
-                            self._MESSAGE_GROUPS,
-                            messages_groups_to_add,
-                            messages_types_to_add
+                    # if it is a replay chat item action, must re-base it
+                    replay_chat_item_action = action.get(
+                        'replayChatItemAction')
+                    if replay_chat_item_action:
+                        offset_time = replay_chat_item_action.get(
+                            'videoOffsetTimeMsec')
+                        if offset_time:
+                            data['time_in_seconds'] = float(offset_time) / 1000
+
+                        action = replay_chat_item_action['actions'][0]
+
+                    action.pop('clickTrackingParams', None)
+                    original_action_type = try_get_first_key(action)
+
+                    data['action_type'] = camel_case_split(
+                        remove_suffixes(original_action_type, ('Action', 'Command')))
+
+                    original_message_type = None
+                    original_item = {}
+
+                    # We now parse the info and get the message
+                    # type based on the type of action
+                    if original_action_type in self._KNOWN_ITEM_ACTION_TYPES:
+                        original_item = multi_get(
+                            action, original_action_type, 'item')
+
+                        original_message_type = try_get_first_key(
+                            original_item)
+                        data = self._parse_item(original_item, data, offset)
+
+                    elif original_action_type in self._KNOWN_REMOVE_ACTION_TYPES:
+                        original_item = action
+                        if original_action_type in ('markChatItemAsDeletedAction', 'removeChatItemAction'):
+                            original_message_type = 'deletedMessage'
+                        else:  # markChatItemsByAuthorAsDeletedAction, removeChatItemByAuthorAction
+                            original_message_type = 'banUser'
+
+                        data = self._parse_item(original_item, data, offset)
+
+                    elif original_action_type in self._KNOWN_REPLACE_ACTION_TYPES:
+                        original_item = multi_get(
+                            action, original_action_type, 'replacementItem')
+
+                        original_message_type = try_get_first_key(
+                            original_item)
+                        data = self._parse_item(original_item, data, offset)
+
+                    elif original_action_type in self._KNOWN_TOOLTIP_ACTION_TYPES:
+                        original_item = multi_get(
+                            action, original_action_type, 'tooltip')
+
+                        original_message_type = try_get_first_key(
+                            original_item)
+                        data = self._parse_item(original_item, data, offset)
+
+                    elif original_action_type in self._KNOWN_ADD_BANNER_TYPES:
+                        original_item = multi_get(
+                            action, original_action_type, 'bannerRenderer')
+
+                        if original_item:
+                            original_message_type = try_get_first_key(
+                                original_item)
+
+                            header = original_item[original_message_type].get(
+                                'header') or None
+                            parsed_header = None
+                            if not header:
+                                log('warning', f'Could not extract header from banner (handled?): {original_item}')
+                            else:
+                                try:
+                                    parsed_header = self._parse_item(
+                                        header, offset=offset)
+                                except (KeyError, AttributeError):
+                                    traceback.print_exc()
+                                    parsed_header = original_item
+                            if parsed_header:
+                                header_message = parsed_header.get('message')
+                            else:
+                                header_message = None
+
+                            contents = original_item[original_message_type].get(
+                                'contents') or original_item
+                            parsed_contents = None
+                            if original_item is contents:
+                                log('warning', f'Could not extract contents from banner: {original_item}')
+                                try:
+                                    parsed_contents = self._parse_item(
+                                        contents, offset=offset)
+                                except (KeyError, AttributeError):
+                                    traceback.print_exc()
+                                    parsed_contents = original_item
+                            if parsed_contents:
+                                banner_message = parsed_contents.get('bannerMessage')
+                            else:
+                                banner_message = None
+
+                            if parsed_header:
+                                data.update(parsed_header)
+                            if parsed_contents:
+                                data.update(parsed_contents)
+                            if header_message:
+                                data['header_message'] = header_message
+                            if banner_message:
+                                data['message'] = banner_message
+                            else:
+                                debug_log('no message, trying higher up', data)
+                                parsed_contents = self._parse_item(
+                                    original_item, data, offset)
+                                # FIXME: this still feels very yucky.
+                                if parsed_contents.get('message_type') == 'banner_redirect':
+                                    original_message_type = 'liveChatBannerRedirectRenderer'
+                        else:
+                            debug_log(
+                                'No bannerRenderer item',
+                                f'Action type: {original_action_type}',
+                                f'Action: {action}',
+                                f'Parsed data: {data}'
+                            )
+
+                    elif original_action_type in self._KNOWN_REMOVE_BANNER_TYPES:
+                        original_item = action
+                        original_message_type = 'removeBanner'
+                        data = self._parse_item(original_item, data, offset)
+
+                    elif original_action_type in self._KNOWN_POLL_ACTION_TYPES:
+                        original_item = multi_get(
+                            action, original_action_type, 'panelToShow') or {}
+                        original_message_type = 'poll'  # fake
+                        if not original_item:
+                            original_item = multi_get(
+                                action, original_action_type, 'pollToUpdate') or {}
+                            original_message_type = 'pollUpdate'  # fake
+                        data = self._parse_item(original_item or action, data, offset)
+                        if not original_item:
+                            panel_id = multi_get(
+                                action, original_action_type, 'targetPanelId') or {}
+                            if panel_id:
+                                original_message_type = 'closePanel'
+                                data.update({'target_panel_id': panel_id})
+                            else:
+                                original_message_type = try_get_first_key(
+                                    original_item) or ''
+
+                    elif original_action_type in self._KNOWN_IGNORE_ACTION_TYPES:
+                        continue  # ignore these
+
+                    else:
+                        # not processing these
+                        debug_log(
+                            f'Unknown action: {original_action_type}',
+                            action,
+                            data
                         )
 
-                        if not to_add:
+                    test_for_missing_keys = original_item.get(
+                        original_message_type, {}).keys()
+                    missing_keys = test_for_missing_keys - self._KNOWN_KEYS
+
+                    if not data:
+                        debug_log(
+                            f'Parse of action returned empty results: {original_action_type}',
+                            action
+                        )
+
+                    if missing_keys:
+                        debug_log(
+                            f'Missing keys found: {missing_keys}',
+                            f'Message type: {original_message_type}',
+                            f'Action type: {original_action_type}',
+                            f'Action: {action}',
+                            f'Parsed data: {data}'
+                        )
+
+                    if original_message_type:
+
+                        new_index = remove_prefixes(
+                            original_message_type, 'liveChat')
+                        new_index = remove_suffixes(new_index, 'Renderer')
+                        data['message_type'] = camel_case_split(new_index)
+
+                        # TODO add option to keep placeholder items
+                        if original_message_type in self._KNOWN_IGNORE_MESSAGE_TYPES:
                             continue
+                            # skip placeholder items
+                        elif original_message_type not in self._KNOWN_ACTION_TYPES[original_action_type]:
+                            debug_log(
+                                f'Unknown message type "{original_message_type}" for action "{original_action_type}"',
+                                f"New message type: {data['message_type']}",
+                                f'Action: {action}',
+                                f'Parsed data: {data}'
+                            )
 
-                        # if from a replay, check whether to skip this message or not, based on its time
-                        if is_replay:
-                            # assume message is at beginning if it does not have a time component
-                            time_in_seconds = data.get(
-                                'time_in_seconds', 0) + (offset or 0)
+                    else:  # no type # can ignore message
+                        debug_log(
+                            'No message type',
+                            f'Action type: {original_action_type}',
+                            f'Action: {action}',
+                            f'Parsed data: {data}'
+                        )
+                        continue
 
-                            before_start = start_time is not None and time_in_seconds < start_time
-                            after_end = end_time is not None and time_in_seconds > end_time
+                    # check whether to skip this message or not, based on its type
 
-                            if first_time and before_start:
-                                continue  # first time and invalid start time
-                            elif before_start or after_end:
-                                return  # while actually searching, if time is invalid
+                    to_add = self._must_add_item(
+                        data,
+                        self._MESSAGE_GROUPS,
+                        messages_groups_to_add,
+                        messages_types_to_add
+                    )
 
-                        # try to reconstruct time in seconds from timestamp and stream start
-                        # if data.get('time_in_seconds') is None and data.get('timestamp') and stream_start_time:
-                        #     data['time_in_seconds'] = (data['timestamp'] - stream_start_time)/1e6
-                        #     data['time_text'] = seconds_to_time(int(data['time_in_seconds']))
+                    if not to_add:
+                        continue
 
-                        message_count += 1
-                        yield data
+                    # if from a replay, check whether to skip this message or not, based on its time
+                    if is_replay:
+                        # assume message is at beginning if it does not have a time component
+                        time_in_seconds = data.get(
+                            'time_in_seconds', 0) + (offset or 0)
 
-                    log('debug', f'Total number of messages: {message_count}')
-                except self.ContinueException:
-                    # passed 'continue'
-                    continue
+                        before_start = start_time is not None and time_in_seconds < start_time
+                        after_end = end_time is not None and time_in_seconds > end_time
+
+                        if first_time and before_start:
+                            continue  # first time and invalid start time
+                        elif before_start or after_end:
+                            return  # while actually searching, if time is invalid
+
+                    # try to reconstruct time in seconds from timestamp and stream start
+                    # if data.get('time_in_seconds') is None and data.get('timestamp') and stream_start_time:
+                    #     data['time_in_seconds'] = (data['timestamp'] - stream_start_time)/1e6
+                    #     data['time_text'] = seconds_to_time(int(data['time_in_seconds']))
+
+                    message_count += 1
+                    yield data
+
+                log('debug', f'Total number of messages: {message_count} (new: {(message_count - old_message_count)})')
             elif is_replay:
                 # no more actions to process in a chat replay
                 break
@@ -2015,6 +2192,8 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
                 continuation_key = try_get_first_key(cont)
                 continuation_info = cont[continuation_key]
+
+                set_log_level('info')
 
                 log('debug', f'Continuation info: {continuation_info}')
 
@@ -2039,6 +2218,8 @@ class YouTubeChatDownloader(BaseChatDownloader):
                         cont
                     )
 
+                set_log_level('debug')
+
                 # sometimes continuation contains timeout info
                 sleep_duration = continuation_info.get('timeoutMs')
                 # and not actions:# and not force_no_timeout:
@@ -2059,9 +2240,10 @@ class YouTubeChatDownloader(BaseChatDownloader):
                     # This ensures that no messages are missed and we do spam YouTube
                     # with requests (which may lead to 429 errors or IP blocking).
 
+                    suggested_timeout = sleep_duration
                     sleep_duration = max(min(sleep_duration, 8000), 0)
 
-                    log('debug', f'Sleeping for {sleep_duration}ms.')
+                    log('debug', f'Sleeping for {sleep_duration}ms. (suggested: {suggested_timeout}ms)')
                     interruptible_sleep(sleep_duration / 1000)
 
             if no_continuation:  # no continuation, end

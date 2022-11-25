@@ -506,15 +506,15 @@ class BaseChatDownloader:
 
     def _session_post(self, url, **kwargs):
         """Make a post request using the current session."""
-        return self.session.post(url, **kwargs)
+        return self.session.post(url, timeout=(9.5, 55), **kwargs)
 
     def _session_get(self, url, **kwargs):
         """Make a get request using the current session."""
-        return self.session.get(url, **kwargs)
+        return self.session.get(url, timeout=(9.5, 55), **kwargs)
 
     def _session_get_json(self, url, **kwargs):
         """Make a get request using the current session and return as JSON."""
-        return self._session_get(url, **kwargs).json()
+        return self._session_get(url, timeout=(9.5, 55), **kwargs).json()
 
     def get_site_value(self, value):
         """Get the site's default value for a certain parameter
@@ -641,7 +641,7 @@ class BaseChatDownloader:
             retry_text += f' {error} ({error.__class__.__name__})'
 
         if isinstance(error, JSONDecodeError):
-            log('debug', error.__dict__)
+            log('info', error.__dict__)
             page_title = get_title_of_webpage(error.doc)
             if page_title:
                 log('debug', f'Title: {page_title}')
