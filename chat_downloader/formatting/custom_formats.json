@@ -14,7 +14,7 @@
             },
             "money.text": "*{}* ",
             "message": ": {}",
-            "primary_text": " {}"
+            "primary_text": ": {}"
         }
     },
     "24_hour": {
@@ -76,6 +76,27 @@
                         "vote_percentage": ": {}"
                     }
                 }
+            }
+        },
+        {
+            "matching":[
+                "banner"
+            ],
+            "template": "{time_text|timestamp}{header_message}{author.badges}{money.text}{author.display_name|author.name}{message|primary_text}",
+            "inherit": "default",
+            "keys": {
+                "header_message": "{}: "
+            }
+        },
+        {
+            "matching":[
+                "sponsorships_gift_redemption_banner"
+            ],
+            "template": "{time_text|timestamp}{header_message}{author.badges}{money.text}{author.display_name|author.name}{message|primary_text}",
+            "inherit": "default",
+            "keys": {
+                "header_message": "{}: ",
+                "message": "{}"
             }
         }
     ],

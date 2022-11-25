@@ -43,7 +43,7 @@ from ..utils.core import (
     get_title_of_webpage
 )
 
-from ..debugging import (log, debug_log)
+from ..debugging import (log, debug_log, set_log_level)
 
 import json
 import time
@@ -656,6 +656,13 @@ class YouTubeChatDownloader(BaseChatDownloader):
         return choices
 
     @ staticmethod
+    def _convert_message_type(original_message_type):
+        new_index = remove_prefixes(
+            original_message_type, 'liveChat')
+        new_index = remove_suffixes(new_index, 'Renderer')
+        return camel_case_split(new_index)
+
+    @ staticmethod
     def _parse_item(item, info=None, offset=0):
         if not isinstance(item, dict):
             return {}
@@ -696,15 +703,21 @@ class YouTubeChatDownloader(BaseChatDownloader):
             debug_log('got nested header')
             info.update(YouTubeChatDownloader._parse_item(
                 header, offset=offset))
+            header_message = info.get('message')
+            if header_message is not None:
+                debug_log(f"original header_message: {info.get('header_message')}")
+                debug_log(f'new message as header_message: {header_message}')
+                info['header_message'] = header_message
 
         contents = item_info.get('contents')
         if contents:
             debug_log('got nested contents')
             info.update(YouTubeChatDownloader._parse_item(
                 contents, offset=offset))
-            if contents.get('liveChatBannerRedirectRenderer'):
+            original_contents_message_type = try_get_first_key(contents)
+            if original_contents_message_type:
                 debug_log('overriding message type')
-                info['message_type'] = 'banner_redirect'  # FIXME don't do this directly, and not here
+                info['message_type'] = YouTubeChatDownloader._convert_message_type(original_contents_message_type)
 
         BaseChatDownloader._move_to_dict(info, 'author')
 
@@ -1725,44 +1738,12 @@ class YouTubeChatDownloader(BaseChatDownloader):
                 original_message_type = try_get_first_key(
                     original_item)
 
-                header = original_item[original_message_type].get(
-                    'header') or None
-                parsed_header = None
-                if not header:
-                    log('warning', f'Could not extract header from banner (handled?): {original_item}')
-                else:
-                    parsed_header = self._parse_item(
-                        header, offset=offset)
-                if parsed_header:
-                    header_message = parsed_header.get('message')
-                else:
-                    header_message = None
+                parsed_contents = self._parse_item(
+                    original_item, data, offset)
 
-                contents = original_item[original_message_type].get(
-                    'contents') or original_item
-                parsed_contents = None
-                if original_item is contents:
-                    log('warning', f'Could not extract contents from banner: {original_item}')
-                    parsed_contents = self._parse_item(
-                        contents, offset=offset)
-                if parsed_contents:
-                    banner_message = parsed_contents.get('bannerMessage')
-                else:
-                    banner_message = None
-
-                data.update(parsed_header or {})
-                data.update(parsed_contents or {})
-                if header_message:
-                    data['header_message'] = header_message
-                if banner_message:
-                    data['message'] = banner_message
-                else:
-                    debug_log('no message, trying higher up', data)
-                    parsed_contents = self._parse_item(
-                        original_item, data, offset)
-                    # FIXME: this still feels very yucky.
-                    if parsed_contents.get('message_type') == 'banner_redirect':
-                        original_message_type = 'liveChatBannerRedirectRenderer'
+                # FIXME: this still feels very yucky.
+                if parsed_contents.get('message_type') == 'banner_redirect':
+                    original_message_type = 'liveChatBannerRedirectRenderer'
             else:
                 debug_log(
                     'No bannerRenderer item',
@@ -1827,11 +1808,11 @@ class YouTubeChatDownloader(BaseChatDownloader):
             )
 
         if original_message_type:
-
-            new_index = remove_prefixes(
-                original_message_type, 'liveChat')
-            new_index = remove_suffixes(new_index, 'Renderer')
-            data['message_type'] = camel_case_split(new_index)
+            saved_message_type = data.get('message_type')
+            if saved_message_type:
+                debug_log(f'set message type found: {saved_message_type}')
+            if saved_message_type != 'sponsorships_gift_redemption_banner':
+                data['message_type'] = YouTubeChatDownloader._convert_message_type(original_message_type)
 
             # TODO add option to keep placeholder items
             if original_message_type in self._KNOWN_IGNORE_MESSAGE_TYPES:
