@@ -60,7 +60,8 @@
         {
             "matching":[
                 "poll",
-                "poll_update"
+                "poll_update",
+                "banner_poll"
             ],
             "template": "{time_text|timestamp}{metadata_text.message}{poll_question.message}{choices}",
             "inherit": "default",

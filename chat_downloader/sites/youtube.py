@@ -721,9 +721,16 @@ class YouTubeChatDownloader(BaseChatDownloader):
         if contents:
             info.update(YouTubeChatDownloader._parse_item(
                 contents, offset=offset))
+            # FIXME don't do this directly, and not here
+            if contents.get('liveChatBannerPollRenderer'):
+                debug_log('overriding message type (fixme)')
+                info['message_type'] = 'banner_poll'
+            if contents.get('liveChatCallForQuestionsRenderer'):
+                debug_log('overriding message type (fixme)')
+                info['message_type'] = 'call_for_questions'
             if contents.get('liveChatBannerRedirectRenderer'):
-                debug_log('overriding message type')
-                info['message_type'] = 'banner_redirect'  # FIXME don't do this directly, and not here
+                debug_log('overriding message type (fixme)')
+                info['message_type'] = 'banner_redirect'
 
         BaseChatDownloader._move_to_dict(info, 'author')
 
@@ -960,6 +967,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         # poll (action_panel)
         'pollQuestion': r('poll_question', _parse_runs),
+        'pollChoices': r('choices', _parse_choices),
         'choices': r('choices', _parse_choices),
         'liveChatPollId': 'poll_id',
         'liveChatPollType': 'poll_type',
@@ -1085,8 +1093,10 @@ class YouTubeChatDownloader(BaseChatDownloader):
         'addBannerToLiveChatCommand': [
             'liveChatBannerRenderer',
             'liveChatBannerRedirectRenderer',
+            'liveChatBannerPollRenderer',
             'liveChatBannerHeaderRenderer',
             'liveChatTextMessageRenderer',
+            'liveChatCallForQuestionsRenderer',
         ]
     }
 
@@ -1949,6 +1959,10 @@ class YouTubeChatDownloader(BaseChatDownloader):
                                 # FIXME: this still feels very yucky.
                                 if parsed_contents.get('message_type') == 'banner_redirect':
                                     original_message_type = 'liveChatBannerRedirectRenderer'
+                                elif parsed_contents.get('message_type') == 'banner_poll':
+                                    original_message_type = 'liveChatBannerPollRenderer'
+                                elif parsed_contents.get('message_type') == 'call_for_questions':
+                                    original_message_type = 'liveChatCallForQuestionsRenderer'
 
                         else:
                             debug_log(
