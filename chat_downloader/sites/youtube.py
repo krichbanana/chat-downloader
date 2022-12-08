@@ -977,6 +977,11 @@ class YouTubeChatDownloader(BaseChatDownloader):
         'selected': 'selected',
         'voteRatio': 'vote_ratio',
         'votePercentage': r('vote_percentage', _get_simple_text),
+
+        # call for questions
+        'creatorAuthorName': r('author_name', _parse_text),
+        'questionMessage': r('message', _parse_text),
+        'creatorAvatar': r('author_images', _parse_thumbnails),
     }
 
     _COLOUR_KEYS = [
