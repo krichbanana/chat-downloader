@@ -1228,9 +1228,12 @@ class YouTubeChatDownloader(BaseChatDownloader):
         'videoId': 'video_id',
         'lengthText': r('duration', lambda x: YouTubeChatDownloader._parse_text(x)),
         'title': r('title', lambda x: YouTubeChatDownloader._parse_runs(x)['message']),
+        'videoInfo': r('video_info', lambda x: YouTubeChatDownloader._parse_text(x)),
         'videoType': 'video_type',
         'viewCountText': r('view_count', lambda x: YouTubeChatDownloader._parse_text(x)),
         'shortViewCountText': r('short_view_count', lambda x: YouTubeChatDownloader._parse_text(x)),
+        'upcomingEventData': r('start_time', lambda x: x.get('startTime')),
+        'thumbnailOverlays': r('time_status', lambda x: multi_get(x, 0, 'thumbnailOverlayTimeStatusRenderer', 'text', 'simpleText')),
 
         # 'videoId', 'thumbnail', 'title', 'viewCountText', 'navigationEndpoint', 'ownerBadges', 'trackingParams', 'shortViewCountText', 'menu', 'thumbnailOverlays'
     }
