@@ -1,5 +1,3 @@
-import traceback
-
 from .common import (
     BaseChatDownloader,
     Chat,
@@ -723,15 +721,10 @@ class YouTubeChatDownloader(BaseChatDownloader):
             info.update(YouTubeChatDownloader._parse_item(
                 contents, offset=offset))
             # FIXME don't do this directly, and not here
-            if contents.get('liveChatBannerPollRenderer'):
+            nested_message_type = try_get_first_key(contents)
+            if nested_message_type in YouTubeChatDownloader._NESTED_BANNER_REMAPPING:
                 debug_log('overriding message type (fixme)')
-                info['message_type'] = 'banner_poll'
-            if contents.get('liveChatCallForQuestionsRenderer'):
-                debug_log('overriding message type (fixme)')
-                info['message_type'] = 'call_for_questions'
-            if contents.get('liveChatBannerRedirectRenderer'):
-                debug_log('overriding message type (fixme)')
-                info['message_type'] = 'banner_redirect'
+                info['message_type'] = YouTubeChatDownloader._NESTED_BANNER_REMAPPING[nested_message_type]
 
         BaseChatDownloader._move_to_dict(info, 'author')
 
@@ -1105,6 +1098,14 @@ class YouTubeChatDownloader(BaseChatDownloader):
             'liveChatCallForQuestionsRenderer',
         ]
     }
+
+    _NESTED_BANNER_REMAPPING = {
+        'liveChatBannerPollRenderer': 'banner_poll',
+        'liveChatCallForQuestionsRenderer': 'call_for_questions',
+        'liveChatBannerRedirectRenderer': 'banner_redirect',
+    }
+
+    _NESTED_BANNER_REVERSE_REMAPPING = {value: key for key, value in _NESTED_BANNER_REMAPPING.items()}
 
     _KNOWN_REMOVE_BANNER_TYPES = {
         'removeBannerForLiveChatCommand': [
@@ -1939,39 +1940,29 @@ class YouTubeChatDownloader(BaseChatDownloader):
                         if original_item:
                             original_message_type = try_get_first_key(
                                 original_item)
-
                             header = original_item[original_message_type].get(
                                 'header') or None
-                            parsed_header = None
-                            if not header:
-                                log('warning', f'Could not extract header from banner (may extract later): {original_item}')
-                            else:
-                                try:
-                                    parsed_header = self._parse_item(
-                                        header, offset=offset)
-                                except (KeyError, AttributeError):
-                                    traceback.print_exc()
-                                    parsed_header = original_item
-                            if parsed_header:
-                                header_message = parsed_header.get('message')
-                            else:
-                                header_message = None
-
                             contents = original_item[original_message_type].get(
                                 'contents') or original_item
+                            parsed_header = None
                             parsed_contents = None
+                            header_message = None
+                            banner_message = None
+
+                            if header:
+                                parsed_header = self._parse_item(
+                                    header, offset=offset)
+                            if parsed_header:
+                                header_message = parsed_header.get('message')
+                            elif not contents:
+                                log('warning', f'Could not extract header from banner: {original_item}')
+
                             if original_item is contents:
                                 log('warning', f'Could not extract contents from banner: {original_item}')
-                                try:
-                                    parsed_contents = self._parse_item(
-                                        contents, offset=offset)
-                                except (KeyError, AttributeError):
-                                    traceback.print_exc()
-                                    parsed_contents = original_item
+                                parsed_contents = self._parse_item(
+                                    contents, offset=offset)
                             if parsed_contents:
                                 banner_message = parsed_contents.get('bannerMessage')
-                            else:
-                                banner_message = None
 
                             if parsed_header:
                                 data.update(parsed_header)
@@ -1986,12 +1977,9 @@ class YouTubeChatDownloader(BaseChatDownloader):
                                 parsed_contents = self._parse_item(
                                     original_item, data, offset)
                                 # FIXME: this still feels very yucky.
-                                if parsed_contents.get('message_type') == 'banner_redirect':
-                                    original_message_type = 'liveChatBannerRedirectRenderer'
-                                elif parsed_contents.get('message_type') == 'banner_poll':
-                                    original_message_type = 'liveChatBannerPollRenderer'
-                                elif parsed_contents.get('message_type') == 'call_for_questions':
-                                    original_message_type = 'liveChatCallForQuestionsRenderer'
+                                if parsed_contents.get('message_type') in self._NESTED_BANNER_REVERSE_REMAPPING:
+                                    original_message_type = self._NESTED_BANNER_REVERSE_REMAPPING[
+                                        parsed_contents.get('message_type')]
 
                         else:
                             debug_log(
