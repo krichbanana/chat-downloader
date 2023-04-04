@@ -47,7 +47,6 @@ from ..utils.core import (
 from ..debugging import (log, debug_log)
 
 from itertools import islice
-import json
 import time
 import random
 import re
@@ -1162,6 +1161,7 @@ class YouTubeChatDownloader(BaseChatDownloader):
     }
 
     _KNOWN_IGNORE_ACTION_TYPES = {
+        'liveChatReportModerationStateCommand': [],
     }
 
     _KNOWN_ACTION_TYPES = {
