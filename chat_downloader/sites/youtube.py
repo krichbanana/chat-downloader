@@ -990,7 +990,10 @@ class YouTubeChatDownloader(BaseChatDownloader):
         'startBackgroundColor', 'amountTextColor', 'endBackgroundColor',
 
         # ticker_sponsor_item
-        'detailTextColor'
+        'detailTextColor',
+
+        # colored usernames
+        'authorUsernameColorLight', 'authorUsernameColorDark',
     ]
 
     _STICKER_KEYS = [
