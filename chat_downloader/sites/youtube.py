@@ -806,6 +806,10 @@ class YouTubeChatDownloader(BaseChatDownloader):
         return badges
 
     @staticmethod
+    def _parse_before_buttons(buttons):
+        return multi_get(buttons, 0, 'buttonViewModel', 'title')
+
+    @staticmethod
     def _parse_thumbnails(item):
 
         # sometimes thumbnails come as a list
@@ -905,6 +909,10 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         'icon': r('icon', lambda x: x.get('iconType')),
         'authorBadges': r('author_badges', _parse_badges),
+
+        # button before message linking to replied SC.
+        # (YT currently only returns this on initial response on replays...)
+        'beforeContentButtons': r('replyee_name', _parse_before_buttons),
 
         'headerOverlayImage': r('header_overlay_image', _parse_thumbnails),
 
@@ -1007,6 +1015,13 @@ class YouTubeChatDownloader(BaseChatDownloader):
     _KEYS_TO_IGNORE = [
         # to actually ignore
         'contextMenuAccessibility', 'contextMenuEndpoint', 'trackingParams', 'accessibility', 'dwellTimeMs',
+        'isV2Style',
+
+        # perhaps NYI
+        'creatorHeartButton', 'replyButton',
+
+        # animation stuff
+        'animationOrigin', 'dynamicStateData',
 
         'empty',  # signals liveChatMembershipItemRenderer has no message body
 

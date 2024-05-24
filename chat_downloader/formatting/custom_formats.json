@@ -1,6 +1,6 @@
 {
     "default": {
-        "template": "{time_text|timestamp}{author.badges}{money.text}{author.display_name|author.name}{message|primary_text}",
+        "template": "{time_text|timestamp}{author.badges}{money.text}{author.display_name|author.name}{replyee_name}{message|primary_text}",
         "keys": {
             "time_text": "{} | ",
             "timestamp": {
@@ -13,6 +13,7 @@
                 "separator": ", "
             },
             "money.text": "*{}* ",
+            "replyee_name": " (=>> {})",
             "message": ": {}",
             "primary_text": " {}"
         }
