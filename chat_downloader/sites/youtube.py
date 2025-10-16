@@ -1582,6 +1582,8 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
         # Video info
         video_details = player_response_info.get('videoDetails') or {}
+        if not video_details:
+            log('warning', f'Unable to parse video details, proceeding with caution')
         details['title'] = video_details.get('title')
         details['author'] = video_details.get('author')
         details['author_id'] = video_details.get('channelId')
@@ -1674,6 +1676,9 @@ class YouTubeChatDownloader(BaseChatDownloader):
 
                 error_message = error_message.strip()
 
+                if "not a bot" in error_message:
+                    log('warning', f'YouTube thinks we are a bot, please login')
+
                 status = playability_status.get('status')
 
                 if status == 'ERROR':
@@ -1709,6 +1714,10 @@ class YouTubeChatDownloader(BaseChatDownloader):
                                        'conversationBarRenderer', 'availabilityMessage', 'messageRenderer', 'text')
                 error_message = self._parse_runs(error_runs, False)[
                     'message'] if error_runs else 'Video does not have a chat replay.'
+
+                # This should qualm the issue for now
+                if 'will begin' in playability_status.get('reason', ''):
+                    raise ChatDisabled('Chat is disabled for an unspecified reason.')
 
                 # Live chat replay was turned off for this video. -> NoChatReplay
                 if 'disabled' in error_message:
